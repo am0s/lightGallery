@@ -394,7 +394,8 @@
     };
 
     Plugin.prototype.setupHandlers = function() {
-        var mediaHandlers = [];
+        var _this = this,
+            mediaHandlers = [];
         _this.mediaHandlers = mediaHandlers;
         for (var i = 0; i < $.fn.lightGallery.mediaHandlersActive.length; ++i) {
             var handler = $.fn.lightGallery.mediaHandlersActive[i];
