@@ -71,6 +71,136 @@
         galleryId: 1
     };
 
+    /**
+     * The default media handler which only handles regular images.
+     *
+     * It takes care of find the thumbnail url and setting up the slide markup.
+     */
+    function MediaHandler(core, index, element, $slide, type) {
+        this.gallery = core;
+        this.core = core;
+        this.index = index;
+        this.element = element;
+        this.$slide = $slide;
+        this.type = type || 'image';
+
+        this.html = null;
+        this.videoId = null;
+    }
+
+    /**
+     * Loads the default thumbnail url and returns it.
+     */
+    MediaHandler.prototype.defaultThumbnail = function () {
+        var thumbImg;
+        if (this.core.s.dynamic) {
+            thumbImg = this.element.thumb;
+        } else {
+            if (!this.core.s.exThumbImage) {
+                thumbImg = this.element.find('img').attr('src');
+            } else {
+                thumbImg = this.element.attr(this.core.s.exThumbImage);
+            }
+        }
+        return thumbImg;
+    }
+
+    MediaHandler.prototype.thumbnail = function (promise) {
+        return promise.resolve(this.defaultThumbnail());
+    }
+
+    MediaHandler.prototype.loadContent = function (promise) {
+        var _this = this;
+        var _hasPoster = false;
+        var _src;
+        var _poster;
+        var _srcset;
+        var _sizes;
+        var getResponsiveSrc = function(srcItms) {
+            var rsWidth = [];
+            var rsSrc = [];
+            for (var i = 0; i < srcItms.length; i++) {
+                var __src = srcItms[i].split(' ');
+
+                // Manage empty space
+                if (__src[0] === '') {
+                    __src.splice(0, 1);
+                }
+
+                rsSrc.push(__src[0]);
+                rsWidth.push(__src[1]);
+            }
+
+            var wWidth = $(window).width();
+            for (var j = 0; j < rsWidth.length; j++) {
+                if (parseInt(rsWidth[j], 10) > wWidth) {
+                    _src = rsSrc[j];
+                    break;
+                }
+            }
+        };
+
+        if (this.core.s.dynamic) {
+
+            if (this.element.poster) {
+                _hasPoster = true;
+                _poster = this.element.poster;
+            }
+
+            _src = this.element.src;
+
+            if (this.element.responsive) {
+                var srcDyItms = this.element.responsive.split(',');
+                getResponsiveSrc(srcDyItms);
+            }
+
+            _srcset = this.element.srcset;
+            _sizes = this.element.sizes;
+
+        } else {
+
+            if (this.element.attr('data-poster')) {
+                _hasPoster = true;
+                _poster = this.element.attr('data-poster');
+            }
+
+            _src = this.element.attr('href') || this.element.attr('data-src');
+
+            if (this.element.attr('data-responsive')) {
+                var srcItms = this.element.attr('data-responsive').split(',');
+                getResponsiveSrc(srcItms);
+            }
+
+            _srcset = this.element.attr('data-srcset');
+            _sizes = this.element.attr('data-sizes');
+
+        }
+
+        this.$slide.prepend('<div class="lg-img-wrap"><img class="lg-object lg-image" src="' + _src + '" /></div>');
+
+        var _$img = this.$slide.find('.lg-object');
+        if (_sizes) {
+            _$img.attr('sizes', _sizes);
+        }
+
+        if (_srcset) {
+            _$img.attr('srcset', _srcset);
+            try {
+                picturefill({
+                    elements: [_$img[0]]
+                });
+            } catch (e) {
+                console.error('Make sure you have included Picturefill version 2');
+            }
+        }
+
+        return promise.resolve();
+    }
+
+    MediaHandler.match = function () {
+        // This is the default handler so there is no point in doing anything here
+    }
+
     function Plugin(element, options) {
 
         // Current lightGallery element
@@ -89,6 +219,8 @@
 
         // lightGallery modules
         this.modules = {};
+        this.mediaHandlers = {};
+        this.mediaHandlersActive = [];
 
         // false when lightgallery complete first slide;
         this.lGalleryOn = false;
@@ -209,6 +341,15 @@
             _this.modules[key] = new $.fn.lightGallery.modules[key](_this.el);
         });
 
+        _this.setupHandlers();
+
+        // Setup all lightGallery modules
+        $.each($.fn.lightGallery.modules, function(key) {
+            if (_this.modules[key] && _this.modules[key].setup) {
+                _this.modules[key].setup();
+            }
+        });
+
         // initiate slide function
         _this.slide(index, false, false);
 
@@ -251,6 +392,49 @@
         });
 
     };
+
+    Plugin.prototype.setupHandlers = function() {
+        var mediaHandlers = [];
+        _this.mediaHandlers = mediaHandlers;
+        for (var i = 0; i < $.fn.lightGallery.mediaHandlersActive.length; ++i) {
+            var handler = $.fn.lightGallery.mediaHandlersActive[i];
+            if ($.fn.lightGallery.mediaHandlers[handler]) {
+                mediaHandlers.push($.fn.lightGallery.mediaHandlers[handler]);
+            }
+        }
+
+        // Figure out media handlers per slide
+        _this.$slide.each(function(index) {
+            var $item = _this.s.dynamic ? _this.$items[index] : _this.$items.eq(index),
+                $slide = $(this),
+                src, boundHandler;
+            if (_this.s.dynamic) {
+                src = _this.s.dynamicEl[index].src;
+            } else {
+                src = $item.attr('href') || _this.$items.eq(index).attr('data-src');
+            }
+
+            for (var i = 0; i < mediaHandlers.length; ++i) {
+                var handler = mediaHandlers[i];
+                boundHandler = handler.match(_this, src, index, $item, $slide);
+                if (boundHandler) {
+                    $slide.data('handler', boundHandler);
+                    if (boundHandler.init) {
+                        boundHandler.init();
+                    }
+                    break;
+                }
+            }
+
+            if (!boundHandler) {
+                boundHandler = new MediaHandler(_this, index, $item, $slide, 'image');
+                $slide.data('handler', boundHandler);
+                if (boundHandler.init) {
+                    boundHandler.init();
+                }
+            }
+        });
+    }
 
     Plugin.prototype.structure = function() {
         var list = '';
@@ -626,63 +810,26 @@
 
         //if (_src || _srcset || _sizes || _poster) {
 
-        var iframe = false;
-        if (_this.s.dynamic) {
-            if (_this.s.dynamicEl[index].iframe) {
-                iframe = true;
-            }
-        } else {
-            if (_this.$items.eq(index).attr('data-iframe') === 'true') {
-                iframe = true;
-            }
-        }
-
         var _isVideo = _this.isVideo(_src, index);
         if (!_this.$slide.eq(index).hasClass('lg-loaded')) {
-            if (iframe) {
-                _this.$slide.eq(index).prepend('<div class="lg-video-cont" style="max-width:' + _this.s.iframeMaxWidth + '"><div class="lg-video"><iframe class="lg-object" frameborder="0" src="' + _src + '"  allowfullscreen="true"></iframe></div></div>');
-            } else if (_hasPoster) {
-                var videoClass = '';
-                if (_isVideo && _isVideo.youtube) {
-                    videoClass = 'lg-has-youtube';
-                } else if (_isVideo && _isVideo.vimeo) {
-                    videoClass = 'lg-has-vimeo';
-                } else {
-                    videoClass = 'lg-has-html5';
+            var handler = _this.$slide.eq(index).data('handler');
+
+            var loadPromise = $.Deferred();
+            loadPromise.done(function () {
+                _this.$el.trigger('onAferAppendSlide.lg', [index]);
+                _this.$el.trigger('initSlide.lg', [index]);
+
+                if (_this.s.appendSubHtmlTo !== '.lg-sub-html') {
+                    _this.addHtml(index);
                 }
 
-                _this.$slide.eq(index).prepend('<div class="lg-video-cont ' + videoClass + ' "><div class="lg-video"><span class="lg-video-play"></span><img class="lg-object lg-has-poster" src="' + _poster + '" /></div></div>');
-
-            } else if (_isVideo) {
-                _this.$slide.eq(index).prepend('<div class="lg-video-cont "><div class="lg-video"></div></div>');
-                _this.$el.trigger('hasVideo.lg', [index, _src, _html]);
+                _this.$slide.eq(index).addClass('lg-loaded');
+            });
+            if (handler.loadContent) {
+                handler.loadContent(loadPromise);
             } else {
-                _this.$slide.eq(index).prepend('<div class="lg-img-wrap"><img class="lg-object lg-image" src="' + _src + '" /></div>');
+                loadPromise.resolve();
             }
-
-            _this.$el.trigger('onAferAppendSlide.lg', [index]);
-
-            _$img = _this.$slide.eq(index).find('.lg-object');
-            if (_sizes) {
-                _$img.attr('sizes', _sizes);
-            }
-
-            if (_srcset) {
-                _$img.attr('srcset', _srcset);
-                try {
-                    picturefill({
-                        elements: [_$img[0]]
-                    });
-                } catch (e) {
-                    console.error('Make sure you have included Picturefill version 2');
-                }
-            }
-
-            if (this.s.appendSubHtmlTo !== '.lg-sub-html') {
-                _this.addHtml(index);
-            }
-
-            _this.$slide.eq(index).addClass('lg-loaded');
         }
 
         _this.$slide.eq(index).find('.lg-object').on('load.lg error.lg', function() {
@@ -1245,6 +1392,15 @@
 
         $(window).scrollTop(_this.prevScrollTop);
 
+        // Let all media handlers know that they must destroy their content
+        _this.$slide.each(function(index) {
+            var $slide = $(this),
+                handler = $slide.data('handler');
+            if (handler && handler.destroy) {
+                handler.destroy();
+            }
+        });
+
         /**
          * if d is false or undefined destroy will only close the gallery
          * plugins instance remains with the element
@@ -1313,5 +1469,13 @@
     };
 
     $.fn.lightGallery.modules = {};
+    $.fn.lightGallery.mediaHandlers = {};
+    $.fn.lightGallery.mediaHandlersActive = [];
+    // Let other plugins access the default handler to extend from it
+    $.fn.lightGallery.MediaHandler = MediaHandler;
+
+    // Activate the default image handler
+    $.fn.lightGallery.mediaHandlers.image = MediaHandler;
+    $.fn.lightGallery.mediaHandlersActive.push('image');
 
 })();
